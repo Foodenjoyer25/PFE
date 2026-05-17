@@ -1,0 +1,1520 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Analyse bloc par bloc — Firmware ESP32-S3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #16110b;
+    --bg-soft: #1f1812;
+    --bg-code: #110d08;
+    --ink: #ede4d0;
+    --ink-soft: #b8ad94;
+    --ink-faint: #7a715f;
+    --amber: #e8a838;
+    --amber-bright: #ffd54f;
+    --rust: #c66a5c;
+    --moss: #8fa672;
+    --rule: #322a20;
+    --serif: "Fraunces", "Iowan Old Style", Georgia, serif;
+    --sans: "Inter", -apple-system, sans-serif;
+    --mono: "JetBrains Mono", "Menlo", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Grain texture */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 100;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Progress bar */
+  #progress {
+    position: fixed;
+    top: 0; left: 0;
+    height: 2px;
+    width: 0%;
+    background: var(--amber);
+    z-index: 200;
+    transition: width 0.1s linear;
+  }
+
+  .container {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 6rem 2rem 8rem;
+  }
+
+  /* Header */
+  header.hero {
+    margin-bottom: 5rem;
+    padding-bottom: 3rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .eyebrow {
+    font-family: var(--sans);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 1.5rem;
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(2.2rem, 5vw, 3.6rem);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin: 0 0 1.2rem;
+    font-variation-settings: "opsz" 144;
+  }
+
+  h1 em {
+    font-style: italic;
+    color: var(--amber-bright);
+    font-weight: 300;
+  }
+
+  .subtitle {
+    font-size: 1.1rem;
+    color: var(--ink-soft);
+    font-style: italic;
+    max-width: 620px;
+    line-height: 1.5;
+  }
+
+  .meta {
+    margin-top: 2.5rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1.5rem;
+    font-family: var(--sans);
+    font-size: 0.78rem;
+  }
+
+  .meta-item .label {
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.65rem;
+    margin-bottom: 0.3rem;
+  }
+
+  .meta-item .value {
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  /* TOC */
+  nav.toc {
+    background: var(--bg-soft);
+    border-left: 2px solid var(--amber);
+    padding: 1.8rem 1.8rem 1.8rem 2rem;
+    margin-bottom: 5rem;
+  }
+
+  nav.toc h2 {
+    font-family: var(--sans);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin: 0 0 1.2rem;
+  }
+
+  nav.toc ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--sans);
+    font-size: 0.86rem;
+  }
+
+  nav.toc li {
+    margin: 0.35rem 0;
+    break-inside: avoid;
+  }
+
+  nav.toc a {
+    color: var(--ink-soft);
+    text-decoration: none;
+    transition: color 0.15s;
+    display: flex;
+    gap: 0.6rem;
+  }
+
+  nav.toc a:hover { color: var(--amber-bright); }
+
+  nav.toc .num {
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    min-width: 1.5rem;
+  }
+
+  /* Sections */
+  section.block {
+    margin-bottom: 4.5rem;
+    scroll-margin-top: 2rem;
+  }
+
+  .block-number {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: 3.5rem;
+    color: var(--amber);
+    line-height: 1;
+    margin-bottom: 0.4rem;
+    font-variation-settings: "opsz" 144;
+  }
+
+  .block-lines {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-faint);
+    letter-spacing: 0.05em;
+    margin-bottom: 1rem;
+    text-transform: uppercase;
+  }
+
+  h2.block-title {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 1.85rem;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    margin: 0 0 1.8rem;
+    color: var(--ink);
+    font-variation-settings: "opsz" 80;
+  }
+
+  h3 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 1.15rem;
+    margin: 2.5rem 0 0.8rem;
+    color: var(--amber-bright);
+    font-style: italic;
+  }
+
+  p { margin: 0 0 1.2rem; }
+
+  p strong {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  em { color: var(--ink); }
+
+  /* Code blocks */
+  pre {
+    background: var(--bg-code);
+    border-left: 2px solid var(--rule);
+    padding: 1.1rem 1.3rem;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.65;
+    color: var(--ink-soft);
+    border-radius: 2px;
+    position: relative;
+  }
+
+  pre::before {
+    content: attr(data-lines);
+    position: absolute;
+    top: 0.5rem;
+    right: 0.9rem;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--ink-faint);
+    letter-spacing: 0.05em;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    color: var(--amber-bright);
+    background: var(--bg-soft);
+    padding: 0.05em 0.4em;
+    border-radius: 2px;
+  }
+
+  pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+  }
+
+  /* Syntax colors (manual) */
+  .kw    { color: #d49a6a; }    /* keyword */
+  .typ   { color: #c4a96b; }    /* type */
+  .str   { color: #8fa672; }    /* string */
+  .com   { color: #5e564a; font-style: italic; }  /* comment */
+  .fn    { color: #e8a838; }    /* function */
+  .num   { color: #c66a5c; }    /* number */
+  .pp    { color: #8a7d68; }    /* preprocessor */
+
+  /* Callout */
+  .callout {
+    background: var(--bg-soft);
+    border-left: 3px solid var(--amber);
+    padding: 1.2rem 1.5rem;
+    margin: 1.8rem 0;
+    font-style: italic;
+    color: var(--ink-soft);
+    font-size: 0.96rem;
+    line-height: 1.55;
+  }
+
+  .callout .label {
+    display: block;
+    font-family: var(--sans);
+    font-style: normal;
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 0.5rem;
+  }
+
+  .callout.warn { border-left-color: var(--rust); }
+  .callout.warn .label { color: var(--rust); }
+
+  /* Pull quote */
+  .pull {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: 1.5rem;
+    line-height: 1.35;
+    color: var(--ink);
+    margin: 2.5rem -1rem;
+    padding: 0 1rem;
+    border-left: 1px solid var(--amber);
+    padding-left: 2rem;
+    font-variation-settings: "opsz" 144;
+  }
+
+  /* Hr ornament */
+  hr.orn {
+    border: none;
+    text-align: center;
+    margin: 4rem 0;
+    color: var(--ink-faint);
+    font-size: 1rem;
+    letter-spacing: 0.5em;
+  }
+
+  hr.orn::before {
+    content: "❦";
+    color: var(--amber);
+  }
+
+  /* Footnotes */
+  footer {
+    margin-top: 6rem;
+    padding-top: 3rem;
+    border-top: 1px solid var(--rule);
+    font-family: var(--sans);
+    font-size: 0.8rem;
+    color: var(--ink-faint);
+    text-align: center;
+    line-height: 1.7;
+  }
+
+  footer .colophon {
+    font-style: italic;
+    font-family: var(--serif);
+    color: var(--ink-soft);
+    margin-top: 0.5rem;
+  }
+
+  /* Mobile */
+  @media (max-width: 640px) {
+    .container { padding: 4rem 1.3rem 5rem; }
+    nav.toc ol { columns: 1; }
+    .block-number { font-size: 2.8rem; }
+    h2.block-title { font-size: 1.5rem; }
+    h1 { font-size: 2rem; }
+    pre { font-size: 0.72rem; padding: 0.9rem 1rem; }
+    .pull { margin: 2rem 0; font-size: 1.2rem; padding-left: 1.3rem; }
+  }
+
+  /* Selection */
+  ::selection {
+    background: var(--amber);
+    color: var(--bg);
+  }
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+
+<div class="container">
+
+<header class="hero">
+  <div class="eyebrow">Analyse de firmware · ESP32-S3</div>
+  <h1>Anatomie d'un nœud capteur <em>résilient</em></h1>
+  <p class="subtitle">
+    Lecture commentée, bloc par bloc, du firmware <code>main_final_real_cleaned.cpp</code> :
+    architecture concurrente bi-cœur, défense en profondeur contre les attaques par déni
+    de service, persistance non volatile et communication temps réel.
+  </p>
+  <div class="meta">
+    <div class="meta-item"><div class="label">Cible</div><div class="value">ESP32-S3-DevKitC-1</div></div>
+    <div class="meta-item"><div class="label">Framework</div><div class="value">Arduino + FreeRTOS</div></div>
+    <div class="meta-item"><div class="label">Lignes</div><div class="value">686</div></div>
+    <div class="meta-item"><div class="label">Blocs analysés</div><div class="value">19</div></div>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>Sommaire</h2>
+  <ol>
+    <li><a href="#b01"><span class="num">01</span><span>Préambule et inclusions</span></a></li>
+    <li><a href="#b02"><span class="num">02</span><span>Configuration réseau et UART</span></a></li>
+    <li><a href="#b03"><span class="num">03</span><span>Paramètres anti-DDoS</span></a></li>
+    <li><a href="#b04"><span class="num">04</span><span>Watchdogs et constantes dual-core</span></a></li>
+    <li><a href="#b05"><span class="num">05</span><span>Classe TcpGateWebServer</span></a></li>
+    <li><a href="#b06"><span class="num">06</span><span>Variables d'état globales</span></a></li>
+    <li><a href="#b07"><span class="num">07</span><span>Persistance NVS</span></a></li>
+    <li><a href="#b08"><span class="num">08</span><span>Watchdog d'attaque</span></a></li>
+    <li><a href="#b09"><span class="num">09</span><span>Anti-spam et applyBan</span></a></li>
+    <li><a href="#b10"><span class="num">10</span><span>Moteur checkAndRate</span></a></li>
+    <li><a href="#b11"><span class="num">11</span><span>Filtre gateShouldBlock</span></a></li>
+    <li><a href="#b12"><span class="num">12</span><span>Nettoyage cleanupIpTable</span></a></li>
+    <li><a href="#b13"><span class="num">13</span><span>Reconnexion ensureWifi</span></a></li>
+    <li><a href="#b14"><span class="num">14</span><span>RateLimitMiddleware</span></a></li>
+    <li><a href="#b15"><span class="num">15</span><span>Sérialisation JSON SSE</span></a></li>
+    <li><a href="#b16"><span class="num">16</span><span>Interface web embarquée</span></a></li>
+    <li><a href="#b17"><span class="num">17</span><span>Tâche réseau (netTask)</span></a></li>
+    <li><a href="#b18"><span class="num">18</span><span>Initialisation (setup)</span></a></li>
+    <li><a href="#b19"><span class="num">19</span><span>Boucle principale (loop)</span></a></li>
+  </ol>
+</nav>
+
+<!-- ════════════════════ BLOC 01 ════════════════════ -->
+<section class="block" id="b01">
+  <div class="block-number">01</div>
+  <div class="block-lines">Lignes 1 — 19</div>
+  <h2 class="block-title">Préambule et inclusions</h2>
+
+<pre data-lines="1–19"><span class="com">// Dépendances platformio.ini :
+// lib_deps = me-no-dev/AsyncTCP, me-no-dev/ESPAsyncWebServer
+//
+// Flags de compilation requis :
+//   -DCONFIG_ASYNC_TCP_RUNNING_CORE=0
+//   -DCONFIG_ASYNC_TCP_TASK_PRIORITY=3
+//   -DCONFIG_ASYNC_TCP_QUEUE_SIZE=64
+//   -DCONFIG_ASYNC_TCP_STACK_SIZE=8192</span>
+
+<span class="pp">#include</span> <span class="str">&lt;WiFi.h&gt;</span>
+<span class="pp">#include</span> <span class="str">&lt;time.h&gt;</span>
+<span class="pp">#include</span> <span class="str">&lt;AsyncTCP.h&gt;</span>
+<span class="pp">#include</span> <span class="str">&lt;ESPAsyncWebServer.h&gt;</span>
+<span class="pp">#include</span> <span class="str">&lt;Preferences.h&gt;</span>
+<span class="pp">#include</span> <span class="str">&lt;map&gt;</span>
+<span class="pp">#include</span> <span class="str">&lt;vector&gt;</span>
+<span class="pp">#include</span> <span class="str">&lt;atomic&gt;</span>
+<span class="pp">#include</span> <span class="str">&lt;algorithm&gt;</span>
+<span class="pp">#include</span> <span class="str">&lt;freertos/semphr.h&gt;</span></pre>
+
+  <p>
+    L'en-tête du fichier remplit deux fonctions documentaires distinctes. Les commentaires liminaires
+    rappellent les <strong>dépendances externes</strong> (les bibliothèques <code>AsyncTCP</code> et
+    <code>ESPAsyncWebServer</code> de <em>me-no-dev</em>) ainsi que les <strong>macros de compilation
+    indispensables</strong> au comportement attendu. Cette duplication entre fichier source et
+    <code>platformio.ini</code> est volontaire : un développeur ouvrant le seul <code>.cpp</code>
+    comprend immédiatement les prérequis sans avoir à inspecter la configuration de build.
+  </p>
+
+  <p>
+    Les inclusions, ensuite, dévoilent l'ambition du projet. On y trouve les en-têtes attendus
+    pour un projet Arduino-ESP32 connecté — <code>WiFi.h</code>, <code>time.h</code>,
+    <code>AsyncTCP.h</code>, <code>ESPAsyncWebServer.h</code> — mais aussi un bouquet d'en-têtes
+    de la bibliothèque standard C++ qui trahit un style d'écriture <strong>résolument moderne</strong> :
+    <code>&lt;map&gt;</code> pour la table des IP, <code>&lt;vector&gt;</code> pour l'historique,
+    <code>&lt;atomic&gt;</code> pour la communication inter-cœurs sans verrou, et
+    <code>&lt;freertos/semphr.h&gt;</code> pour les mutex FreeRTOS. La cohabitation de la STL et des
+    primitives FreeRTOS est l'un des marqueurs de ce code : il refuse l'opposition entre confort
+    moderne et contrôle bas-niveau.
+  </p>
+
+  <div class="callout">
+    <span class="label">À retenir</span>
+    Le choix de <code>std::atomic</code> et de <code>SemaphoreHandle_t</code> côte à côte annonce
+    déjà la stratégie de concurrence : <em>lock-free</em> pour les scalaires partagés, mutex pour
+    les conteneurs complexes.
+  </div>
+</section>
+
+<!-- ════════════════════ BLOC 02 ════════════════════ -->
+<section class="block" id="b02">
+  <div class="block-number">02</div>
+  <div class="block-lines">Lignes 21 — 26</div>
+  <h2 class="block-title">Configuration réseau et bus capteur</h2>
+
+<pre data-lines="21–26"><span class="com">// ── Configuration réseau ──────────────────────────────────────────</span>
+<span class="kw">const</span> <span class="kw">char</span>* SSID     = <span class="str">"BaslimaneR"</span>;
+<span class="kw">const</span> <span class="kw">char</span>* PASSWORD = <span class="str">"ishak2012"</span>;
+
+<span class="pp">#define</span> UART_RX_PIN  <span class="num">16</span>
+<span class="pp">#define</span> UART_BAUD    <span class="num">115200</span></pre>
+
+  <p>
+    Quatre paramètres définissent le lien physique du nœud avec le reste du monde. Les identifiants
+    WiFi sont codés en dur — pratique courante en prototypage, mais à <strong>proscrire en
+    production</strong> : un firmware extrait par lecture de la flash exposerait immédiatement
+    le mot de passe du réseau. Une version durcie utiliserait <code>WiFiManager</code> pour saisir
+    les identifiants au premier démarrage et les stocker, chiffrés, dans la NVS.
+  </p>
+
+  <p>
+    Côté capteur, la broche <code>16</code> de l'ESP32-S3 est configurée comme entrée UART (RX),
+    à <code>115 200</code> bauds — choix identique à celui de la console série, ce qui simplifie
+    le débogage. Aucune broche TX n'est définie pour <code>Serial2</code>
+    (voir <a href="#b18">bloc 18</a> : <code>Serial2.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, -1)</code>),
+    confirmant la nature <strong>unidirectionnelle</strong> du flux : le capteur émet, le nœud écoute.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 03 ════════════════════ -->
+<section class="block" id="b03">
+  <div class="block-number">03</div>
+  <div class="block-lines">Lignes 28 — 35</div>
+  <h2 class="block-title">Paramètres de détection DDoS</h2>
+
+<pre data-lines="28–35"><span class="pp">#define</span> DDOS_WINDOW_MS       <span class="num">1000</span>   <span class="com">// Durée de la fenêtre de comptage (ms)</span>
+<span class="pp">#define</span> DDOS_PPS_THRESHOLD   <span class="num">10</span>     <span class="com">// Seuil de requêtes/s par IP avant bannissement</span>
+<span class="pp">#define</span> DDOS_GLOBAL_PPS_MAX  <span class="num">200</span>    <span class="com">// Seuil global d'alerte trafic élevé</span>
+<span class="pp">#define</span> DDOS_TABLE_LIMIT     <span class="num">200</span>    <span class="com">// Nombre maximum d'IP dans la table</span>
+<span class="pp">#define</span> CLEANUP_INTERVAL_MS  <span class="num">30000</span>  <span class="com">// Intervalle de nettoyage de la table IP</span>
+<span class="pp">#define</span> BAN_LOG_THROTTLE_MS  <span class="num">1000</span>   <span class="com">// Anti-spam des messages de bannissement</span>
+<span class="pp">#define</span> HEAP_LOG_INTERVAL_MS <span class="num">10000</span>  <span class="com">// Intervalle d'affichage de la mémoire libre</span></pre>
+
+  <p>
+    Ce bloc concentre les seuils opérationnels du moteur de détection. Chaque valeur encode
+    une <strong>décision d'ingénierie</strong> qu'il importe d'expliciter.
+  </p>
+
+  <p>
+    Le seuil de <strong>10 requêtes par seconde et par IP</strong> est calibré pour un usage
+    domestique : un navigateur normal effectue au plus une poignée de requêtes lors d'un chargement
+    de page, et l'interface web utilisant SSE après cela ne génère plus aucun appel HTTP entrant.
+    Dix requêtes par seconde révèlent donc presque certainement un script automatisé.
+  </p>
+
+  <p>
+    Le <strong>seuil global de 200 PPS</strong> ne déclenche pas de bannissement individuel mais
+    lève une alerte journalisée : il permet de distinguer une attaque ciblée (une IP au-dessus du
+    seuil personnel) d'une <em>attaque distribuée</em> où chaque IP reste légalement sous le seuil
+    mais où la somme dépasse la capacité de traitement.
+  </p>
+
+  <p>
+    La <strong>limite de 200 IP simultanées</strong> dans la table protège la mémoire :
+    un attaquant ne peut pas saturer le tas en simulant un grand nombre d'adresses sources. C'est
+    une borne dure qui transforme la table en structure à capacité constante, propriété précieuse
+    sur un microcontrôleur.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 04 ════════════════════ -->
+<section class="block" id="b04">
+  <div class="block-number">04</div>
+  <div class="block-lines">Lignes 37 — 51</div>
+  <h2 class="block-title">Watchdogs et configuration dual-core</h2>
+
+<pre data-lines="37–51"><span class="pp">#define</span> ATTACK_REBOOT_MS     <span class="num">30000UL</span>  <span class="com">// Redémarrage 30 s après détection</span>
+<span class="pp">#define</span> WIFI_DEAD_REBOOT_MS <span class="num">120000UL</span>  <span class="com">// Redémarrage si WiFi mort 2 min</span>
+<span class="pp">#define</span> WATCHDOG_CHECK_MS     <span class="num">1000UL</span>
+
+<span class="kw">static constexpr</span> <span class="typ">uint32_t</span>    NET_TASK_STACK    = <span class="num">6144</span>;
+<span class="kw">static constexpr</span> <span class="typ">UBaseType_t</span> NET_TASK_PRIO     = <span class="num">5</span>;
+<span class="kw">static constexpr</span> <span class="typ">BaseType_t</span>  NET_TASK_CORE     = <span class="num">0</span>;
+<span class="kw">static constexpr</span> <span class="typ">uint32_t</span>    NET_TASK_DELAY_MS = <span class="num">2</span>;
+<span class="kw">static constexpr</span> <span class="typ">uint32_t</span>    APP_LOOP_DELAY_MS = <span class="num">5</span>;
+<span class="kw">static constexpr</span> <span class="typ">uint32_t</span>    WIFI_RETRY_MS     = <span class="num">5000</span>;
+<span class="kw">static constexpr</span> <span class="typ">uint32_t</span>    LUX_HISTORY_INTERVAL_MS = <span class="num">15000</span>;
+<span class="kw">static constexpr</span> <span class="typ">uint32_t</span>    BANNED_SEND_MS    = <span class="num">5000</span>;
+<span class="kw">static constexpr</span> <span class="typ">uint16_t</span>    LUX_HISTORY_MAX   = <span class="num">100</span>;</pre>
+
+  <p>
+    Notez la transition stylistique entre les deux groupes : les valeurs de <em>politique de sécurité</em>
+    restent en <code>#define</code> (héritage C, conforme à l'esthétique Arduino), tandis que les
+    constantes <em>opérationnelles</em> migrent vers <code>static constexpr</code>, plus moderne et
+    typée. Cette dichotomie n'est pas anodine : elle place explicitement les paramètres de sécurité
+    dans un registre lexical différent.
+  </p>
+
+  <h3>Le poids de chaque constante</h3>
+  <p>
+    <code>NET_TASK_STACK = 6144</code> octets : la tâche réseau manipule des chaînes JSON pouvant
+    atteindre plusieurs kilo-octets (l'historique sérialisé représente jusqu'à 100 entrées) ; cette
+    réservation est confortable mais non excessive sur un ESP32-S3 doté de 320 Ko de SRAM.
+    <code>NET_TASK_PRIO = 5</code> : priorité supérieure à celle de la tâche AsyncTCP
+    (fixée à 3 dans le <code>platformio.ini</code>), ce qui garantit la primauté de la logique de
+    contrôle sur le traitement brut des paquets — décisif pendant une attaque.
+    <code>NET_TASK_CORE = 0</code> : exécution sur le PRO_CPU, là où tourne déjà la pile TCP,
+    pour exploiter une affinité de cache.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 05 ════════════════════ -->
+<section class="block" id="b05">
+  <div class="block-number">05</div>
+  <div class="block-lines">Lignes 53 — 93</div>
+  <h2 class="block-title">La classe <em>TcpGateWebServer</em></h2>
+
+<pre data-lines="53–93"><span class="kw">class</span> <span class="typ">TcpGateWebServer</span> : <span class="kw">public</span> <span class="typ">AsyncWebServer</span> {
+<span class="kw">public</span>:
+    <span class="kw">using</span> <span class="typ">GateFn</span> = <span class="kw">bool</span> (*)(<span class="kw">const</span> <span class="typ">String</span>&amp; ip);
+
+    <span class="kw">explicit</span> <span class="fn">TcpGateWebServer</span>(<span class="typ">uint16_t</span> port) : <span class="fn">AsyncWebServer</span>(port) {}
+
+    <span class="kw">void</span> <span class="fn">setGate</span>(<span class="typ">GateFn</span> fn) { _gate = fn; }
+
+    <span class="kw">void</span> <span class="fn">begin</span>() {
+        _server.<span class="fn">onClient</span>([](<span class="kw">void</span>* s, <span class="typ">AsyncClient</span>* c) {
+            <span class="kw">auto</span>* self = <span class="kw">static_cast</span>&lt;<span class="typ">TcpGateWebServer</span>*&gt;(s);
+            <span class="kw">if</span> (!c) <span class="kw">return</span>;
+
+            <span class="com">// Fermer immédiatement les connexions bannies au niveau TCP</span>
+            <span class="kw">if</span> (self-&gt;_gate &amp;&amp; self-&gt;<span class="fn">_gate</span>(c-&gt;<span class="fn">remoteIP</span>().<span class="fn">toString</span>())) {
+                c-&gt;<span class="fn">onDisconnect</span>([](<span class="kw">void</span>*, <span class="typ">AsyncClient</span>* client) {
+                    <span class="kw">delete</span> client;
+                }, <span class="kw">nullptr</span>);
+                c-&gt;<span class="fn">close</span>(<span class="kw">true</span>);
+                <span class="kw">return</span>;
+            }
+
+            c-&gt;<span class="fn">setRxTimeout</span>(<span class="num">3</span>);
+            <span class="typ">AsyncWebServerRequest</span>* r = <span class="kw">new</span> <span class="fn">AsyncWebServerRequest</span>(self, c);
+            <span class="kw">if</span> (r == <span class="kw">nullptr</span>) {
+                c-&gt;<span class="fn">onDisconnect</span>(...);
+                c-&gt;<span class="fn">close</span>(<span class="kw">true</span>);
+            }
+        }, <span class="kw">this</span>);
+
+        <span class="typ">AsyncWebServer</span>::<span class="fn">begin</span>();
+    }
+<span class="kw">private</span>:
+    <span class="typ">GateFn</span> _gate = <span class="kw">nullptr</span>;
+};</pre>
+
+  <p>
+    Ce bloc est <strong>la pierre angulaire</strong> de la défense en profondeur. La classe étend
+    <code>AsyncWebServer</code> en interceptant le callback <code>onClient</code> du serveur TCP
+    sous-jacent — un point d'extension peu documenté mais offert par la bibliothèque AsyncTCP.
+  </p>
+
+  <p>
+    L'idée est radicale : <strong>filtrer les connexions au niveau TCP, avant même que l'objet
+    <code>AsyncWebServerRequest</code> ne soit alloué</strong>. Lorsqu'une IP figure sur la liste
+    de bannissement, la connexion est fermée par <code>c-&gt;close(true)</code>, et un callback
+    de libération mémoire est attaché à la déconnexion pour <code>delete client</code> — sans
+    cela, l'objet <code>AsyncClient</code> resterait en fuite. Aucune allocation HTTP, aucune
+    analyse de méthode ni d'URL : l'attaquant ne consomme que le coût d'un paquet SYN/FIN.
+  </p>
+
+  <p>
+    Le <code>setRxTimeout(3)</code> appliqué aux connexions légitimes constitue une protection
+    complémentaire contre les attaques de type <strong>Slowloris</strong>, où l'attaquant maintient
+    des connexions à demi ouvertes sans jamais compléter sa requête HTTP. Trois secondes pour
+    achever l'envoi d'en-têtes HTTP est plus qu'amplement suffisant en réseau local.
+  </p>
+
+  <div class="callout">
+    <span class="label">Élégance</span>
+    Le typedef <code>using GateFn = bool (*)(const String&amp; ip)</code> permet d'injecter
+    dynamiquement la fonction de garde. La classe <code>TcpGateWebServer</code> reste ainsi
+    découplée de la logique de détection : on pourrait substituer une autre politique sans
+    modifier la classe.
+  </div>
+</section>
+
+<!-- ════════════════════ BLOC 06 ════════════════════ -->
+<section class="block" id="b06">
+  <div class="block-number">06</div>
+  <div class="block-lines">Lignes 95 — 129</div>
+  <h2 class="block-title">Variables d'état globales</h2>
+
+<pre data-lines="95–129"><span class="typ">TcpGateWebServer</span> server(<span class="num">80</span>);
+<span class="typ">AsyncEventSource</span> events(<span class="str">"/events"</span>);
+
+<span class="typ">std::atomic</span>&lt;<span class="kw">float</span>&gt; currentLux{<span class="num">0.0f</span>};
+<span class="typ">std::atomic</span>&lt;<span class="kw">bool</span>&gt;  luxUpdated{<span class="kw">false</span>};
+
+<span class="kw">struct</span> <span class="typ">IpState</span> {
+    <span class="typ">uint32_t</span>      pps;
+    <span class="kw">unsigned long</span> windowStart;
+    <span class="kw">unsigned long</span> bannedUntil;
+};
+
+<span class="typ">std::map</span>&lt;<span class="typ">String</span>, <span class="typ">IpState</span>&gt; ipTable;
+<span class="kw">static</span> <span class="typ">SemaphoreHandle_t</span>  tableMutex = <span class="kw">nullptr</span>;
+
+<span class="kw">struct</span> <span class="typ">LuxEntry</span> { <span class="kw">float</span> value; <span class="typ">uint32_t</span> secs; <span class="kw">bool</span> prevBoot; };
+<span class="kw">static</span> <span class="typ">std::vector</span>&lt;<span class="typ">LuxEntry</span>&gt; luxHistory;
+<span class="kw">static</span> <span class="typ">SemaphoreHandle_t</span>     historyMutex = <span class="kw">nullptr</span>;
+
+<span class="typ">uint32_t</span>      globalPps      = <span class="num">0</span>;
+<span class="kw">unsigned long</span> globalWinStart = <span class="num">0</span>;
+<span class="typ">std::atomic</span>&lt;<span class="typ">uint32_t</span>&gt; globalPeakPps{<span class="num">0</span>};
+
+<span class="typ">std::atomic</span>&lt;<span class="kw">unsigned long</span>&gt; attackStartMs{<span class="num">0</span>};
+<span class="typ">std::atomic</span>&lt;<span class="kw">unsigned long</span>&gt; lastWifiOkMs{<span class="num">0</span>};</pre>
+
+  <p>
+    Ce bloc déclare l'<strong>état global du système</strong>. Les variables s'organisent en cinq
+    catégories distinctes : objets serveur, valeur instantanée du capteur, table des IP, historique,
+    et indicateurs de watchdog.
+  </p>
+
+  <h3>La règle de discipline mémoire</h3>
+  <p>
+    Une <strong>règle implicite</strong> guide les choix de synchronisation : les <em>scalaires</em>
+    partagés entre cœurs sont <code>std::atomic</code> (<code>currentLux</code>, <code>luxUpdated</code>,
+    <code>globalPeakPps</code>, <code>attackStartMs</code>, <code>lastWifiOkMs</code>), tandis que
+    les <em>conteneurs</em> (<code>ipTable</code>, <code>luxHistory</code>) sont protégés par des
+    mutex FreeRTOS. Cette discipline reflète une compréhension précise du modèle mémoire C++11 :
+    une opération atomique sur un entier 32 bits est <em>réellement</em> non bloquante sur ESP32,
+    alors qu'une mutation de <code>std::map</code> implique plusieurs allocations et rebalancements
+    d'arbre rouge-noir qui ne peuvent en aucun cas être rendus atomiques.
+  </p>
+
+  <h3>La structure <em>IpState</em></h3>
+  <p>
+    Trois champs suffisent à caractériser le comportement d'une IP : son compteur de paquets
+    dans la fenêtre courante (<code>pps</code>), l'instant de début de cette fenêtre
+    (<code>windowStart</code>), et l'instant jusqu'auquel l'IP est bannie (<code>bannedUntil</code>).
+    Une valeur de <code>bannedUntil = 0</code> signifie « jamais banni », une valeur
+    <code>= ULONG_MAX</code> signifie « banni pour toute la session ». Cette encoding compact évite
+    un booléen supplémentaire.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 07 ════════════════════ -->
+<section class="block" id="b07">
+  <div class="block-number">07</div>
+  <div class="block-lines">Lignes 131 — 171</div>
+  <h2 class="block-title">Persistance NVS de l'historique</h2>
+
+<pre data-lines="131–171"><span class="kw">static</span> <span class="typ">Preferences</span> nvs;
+<span class="pp">#define</span> NVS_HIST_NAMESPACE  <span class="str">"lhist"</span>
+
+<span class="kw">static void</span> <span class="fn">saveLuxHistory</span>() {
+    <span class="fn">xSemaphoreTake</span>(historyMutex, portMAX_DELAY);
+    nvs.<span class="fn">begin</span>(NVS_HIST_NAMESPACE, <span class="kw">false</span>);
+    nvs.<span class="fn">clear</span>();
+    <span class="typ">uint16_t</span> total = (<span class="typ">uint16_t</span>)luxHistory.<span class="fn">size</span>();
+    <span class="typ">uint16_t</span> start = total &gt; LUX_HISTORY_MAX ? total - LUX_HISTORY_MAX : <span class="num">0</span>;
+    <span class="typ">uint16_t</span> saved = <span class="num">0</span>;
+    <span class="kw">for</span> (<span class="typ">uint16_t</span> i = start; i &lt; total; ++i) {
+        <span class="kw">char</span> vk[<span class="num">8</span>], tk[<span class="num">8</span>];
+        <span class="fn">snprintf</span>(vk, <span class="kw">sizeof</span>(vk), <span class="str">"v%u"</span>, saved);
+        <span class="fn">snprintf</span>(tk, <span class="kw">sizeof</span>(tk), <span class="str">"t%u"</span>, saved);
+        nvs.<span class="fn">putFloat</span>(vk, luxHistory[i].value);
+        nvs.<span class="fn">putULong</span>(tk, luxHistory[i].secs);
+        ++saved;
+    }
+    nvs.<span class="fn">putUShort</span>(<span class="str">"n"</span>, saved);
+    nvs.<span class="fn">end</span>();
+    <span class="fn">xSemaphoreGive</span>(historyMutex);
+}
+
+<span class="kw">static void</span> <span class="fn">loadLuxHistory</span>() { <span class="com">/* symétrique, prevBoot = true */</span> }</pre>
+
+  <p>
+    La paire <code>saveLuxHistory</code> / <code>loadLuxHistory</code> assure la <strong>continuité
+    temporelle de l'historique au travers des redémarrages</strong>, qu'ils soient normaux,
+    accidentels ou provoqués par un watchdog.
+  </p>
+
+  <p>
+    L'implémentation s'appuie sur la bibliothèque <code>Preferences</code> d'Arduino-ESP32, elle-même
+    surcouche du système NVS d'ESP-IDF. Le NVS gère automatiquement la répartition d'usure
+    (<em>wear leveling</em>) sur la flash et inclut une somme de contrôle qui détecte la corruption.
+    Chaque entrée est sérialisée sous deux clés : <code>v&lt;i&gt;</code> pour la valeur flottante,
+    <code>t&lt;i&gt;</code> pour le timestamp Unix. Une clé supplémentaire <code>n</code> stocke
+    le nombre d'entrées, permettant à <code>loadLuxHistory</code> de connaître la borne supérieure
+    de la boucle de lecture.
+  </p>
+
+  <h3>Le drapeau <em>prevBoot</em></h3>
+  <p>
+    Lors de la restauration, chaque entrée est marquée <code>prevBoot = true</code>. Cette
+    information est ensuite propagée au navigateur dans le JSON sérialisé (champ <code>"p"</code>),
+    ce qui permet à l'interface web de tracer une <strong>ligne de séparation visuelle</strong>
+    « — previous boot — » entre les mesures héritées et celles de la session courante. C'est un
+    geste d'<em>honnêteté du système</em> envers son utilisateur : le redémarrage n'est pas
+    dissimulé comme un incident, il est révélé comme une information.
+  </p>
+
+  <div class="callout">
+    <span class="label">Considération matérielle</span>
+    À 5 760 écritures par jour (une toutes les 15 secondes), même avec une endurance flash
+    conservative de 100 000 cycles par secteur et la répartition d'usure du NVS, la durée de vie
+    utile dépasse plusieurs années — largement compatible avec un déploiement domestique.
+  </div>
+</section>
+
+<!-- ════════════════════ BLOC 08 ════════════════════ -->
+<section class="block" id="b08">
+  <div class="block-number">08</div>
+  <div class="block-lines">Lignes 173 — 194</div>
+  <h2 class="block-title">Le watchdog d'attaque</h2>
+
+<pre data-lines="173–194"><span class="kw">static void</span> <span class="fn">markAttackActivity</span>(<span class="kw">unsigned long</span> now) {
+    <span class="kw">unsigned long</span> expected = <span class="num">0</span>;
+    attackStartMs.<span class="fn">compare_exchange_strong</span>(expected, now,
+        std::memory_order_relaxed, std::memory_order_relaxed);
+}
+
+<span class="kw">static void</span> <span class="fn">runAttackWatchdog</span>(<span class="kw">unsigned long</span> now) {
+    <span class="kw">unsigned long</span> start = attackStartMs.<span class="fn">load</span>(std::memory_order_relaxed);
+    <span class="kw">if</span> (start == <span class="num">0</span>) <span class="kw">return</span>;
+
+    <span class="kw">if</span> (now - start &gt;= ATTACK_REBOOT_MS) {
+        Serial.<span class="fn">printf</span>(<span class="str">"[!!!] Attaque détectée depuis %lu ms — sauvegarde et redémarrage\n"</span>, now - start);
+        Serial.<span class="fn">flush</span>();
+        <span class="fn">saveLuxHistory</span>();
+        <span class="fn">delay</span>(<span class="num">100</span>);
+        ESP.<span class="fn">restart</span>();
+    }
+}</pre>
+
+  <p>
+    Voici sans doute le passage le plus subtil du firmware. Le <strong>watchdog d'attaque</strong>
+    repose sur un mécanisme atomique en deux temps qui mérite une analyse fine.
+  </p>
+
+  <p>
+    <code>markAttackActivity</code> est appelée à chaque blocage d'IP. Mais au lieu d'écraser
+    naïvement <code>attackStartMs</code> avec l'instant courant, elle utilise
+    <code>compare_exchange_strong(expected=0, now)</code>. La sémantique est limpide :
+    <strong>la valeur n'est mise à jour que si elle vaut encore 0</strong>. Toute détection
+    ultérieure trouvera <code>attackStartMs ≠ 0</code> et l'opération échouera silencieusement,
+    laissant le timestamp initial intact.
+  </p>
+
+  <p>
+    Pourquoi cette précaution ? Sans elle, chaque nouvelle détection réinitialiserait le compteur,
+    et un attaquant maintenant un flux continu de paquets <em>juste au seuil de détection</em>
+    empêcherait indéfiniment l'expiration du délai de 30 secondes. Le code rend cette manipulation
+    impossible : <strong>30 secondes après la première détection, le redémarrage est inéluctable</strong>,
+    quelle que soit la cadence d'attaque qui suit.
+  </p>
+
+  <p>
+    Avant <code>ESP.restart()</code>, le code <code>Serial.flush()</code> assure que les messages
+    de diagnostic atteignent bien la console, <code>saveLuxHistory()</code> persiste l'état, et un
+    <code>delay(100)</code> laisse aux opérations matérielles le temps de se terminer. Ces trois
+    précautions transforment ce qui pourrait être un crash brutal en une <strong>terminaison gracieuse</strong>.
+  </p>
+
+  <p class="pull">
+    Le redémarrage n'est plus un échec ; c'est une stratégie. Le firmware embrasse le modèle
+    <em>crash-only</em> popularisé par Candea et Fox : la seule récupération fiable est la
+    réinitialisation propre.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 09 ════════════════════ -->
+<section class="block" id="b09">
+  <div class="block-number">09</div>
+  <div class="block-lines">Lignes 196 — 209</div>
+  <h2 class="block-title">Anti-spam des logs et application du bannissement</h2>
+
+<pre data-lines="196–209"><span class="kw">static bool</span> <span class="fn">shouldLog</span>(<span class="typ">uint32_t</span> nowMs) {
+    <span class="typ">uint32_t</span> last = lastLogMs.<span class="fn">load</span>(std::memory_order_relaxed);
+    <span class="kw">if</span> (nowMs - last &lt; BAN_LOG_THROTTLE_MS) <span class="kw">return</span> <span class="kw">false</span>;
+    <span class="kw">return</span> lastLogMs.<span class="fn">compare_exchange_strong</span>(
+        last, nowMs, std::memory_order_relaxed, std::memory_order_relaxed);
+}
+
+<span class="kw">static inline void</span> <span class="fn">applyBan</span>(<span class="typ">IpState</span>&amp; s) {
+    s.bannedUntil = ULONG_MAX;
+    s.pps         = <span class="num">0</span>;
+}</pre>
+
+  <p>
+    Deux fonctions utilitaires, deux préoccupations très différentes.
+  </p>
+
+  <p>
+    <code>shouldLog</code> résout un problème classique en sécurité : <strong>les logs eux-mêmes
+    peuvent devenir une vulnérabilité</strong>. Lors d'une attaque à 1 000 paquets par seconde,
+    inonder la console série de messages « BANNI x.x.x.x » saturerait le tampon UART, ralentirait
+    drastiquement le cœur qui produit ces logs, et pourrait noyer des messages importants. La
+    fonction n'autorise un log que toutes les <code>BAN_LOG_THROTTLE_MS = 1000</code> millisecondes.
+    Le <code>compare_exchange_strong</code> garantit que <strong>même si plusieurs tâches appellent
+    <code>shouldLog</code> simultanément, une seule réussira</strong> à imprimer ce tick — propriété
+    indispensable dans un contexte multi-cœur.
+  </p>
+
+  <p>
+    <code>applyBan</code> est minimaliste mais son commentaire en dit long : <em>« L'appelant doit
+    détenir tableMutex »</em>. Cette convention de précondition non vérifiée est un classique des
+    codes embarqués : la vérification ajouterait un coût alors que le contrat est respecté par
+    toutes les routines appelantes. La marque <code>inline</code> élimine tout coût d'appel,
+    transformant la fonction en pure annotation sémantique.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 10 ════════════════════ -->
+<section class="block" id="b10">
+  <div class="block-number">10</div>
+  <div class="block-lines">Lignes 211 — 272</div>
+  <h2 class="block-title">Le moteur <em>checkAndRate</em></h2>
+
+<pre data-lines="211–272"><span class="kw">bool</span> <span class="fn">checkAndRate</span>(<span class="kw">const</span> <span class="typ">String</span>&amp; ip) {
+    <span class="kw">const unsigned long</span> now = <span class="fn">millis</span>();
+    <span class="fn">xSemaphoreTake</span>(tableMutex, portMAX_DELAY);
+
+    <span class="kw">auto</span> it = ipTable.<span class="fn">find</span>(ip);
+    <span class="kw">if</span> (it != ipTable.<span class="fn">end</span>()) {
+        <span class="kw">if</span> (it-&gt;second.bannedUntil &amp;&amp; it-&gt;second.bannedUntil &gt; now) {
+            <span class="fn">xSemaphoreGive</span>(tableMutex);
+            <span class="fn">markAttackActivity</span>(now);
+            <span class="kw">return false</span>;
+        }
+    } <span class="kw">else if</span> (ipTable.<span class="fn">size</span>() &gt;= DDOS_TABLE_LIMIT) {
+        <span class="fn">xSemaphoreGive</span>(tableMutex);
+        <span class="fn">markAttackActivity</span>(now);
+        <span class="kw">return false</span>;
+    }
+
+    <span class="com">// Fenêtre globale : reset toutes les 1000 ms, capture du pic</span>
+    <span class="kw">if</span> (now - globalWinStart &gt;= DDOS_WINDOW_MS) {
+        <span class="kw">if</span> (globalPps &gt; globalPeakPps.<span class="fn">load</span>(...))
+            globalPeakPps.<span class="fn">store</span>(globalPps, ...);
+        globalPps = <span class="num">0</span>;
+        globalWinStart = now;
+    }
+    ++globalPps;
+
+    <span class="com">// Fenêtre par IP : reset glissant, incrément, test du seuil</span>
+    <span class="typ">IpState</span>&amp; s = (it != ipTable.<span class="fn">end</span>()) ? it-&gt;second : ipTable[ip];
+    <span class="kw">if</span> (now - s.windowStart &gt;= DDOS_WINDOW_MS) {
+        s.windowStart = now;
+        s.pps         = <span class="num">0</span>;
+    }
+    ++s.pps;
+
+    <span class="kw">bool</span> banned = (s.pps &gt; DDOS_PPS_THRESHOLD);
+    <span class="kw">if</span> (banned) <span class="fn">applyBan</span>(s);
+
+    <span class="fn">xSemaphoreGive</span>(tableMutex);
+
+    <span class="kw">if</span> (banned) {
+        <span class="fn">markAttackActivity</span>(now);
+        <span class="kw">return false</span>;
+    }
+    <span class="kw">return true</span>;
+}</pre>
+
+  <p>
+    Le cœur analytique du système. Cette fonction est appelée pour chaque requête HTTP entrante et
+    décide en une seule passe : <em>laisser passer</em> ou <em>bloquer</em>.
+  </p>
+
+  <h3>Trois portes en cascade</h3>
+  <p>
+    La fonction présente une structure en <strong>trois portes successives</strong>.
+    <strong>Première porte</strong> : si l'IP est déjà bannie, refus immédiat.
+    <strong>Deuxième porte</strong> : si la table est pleine et l'IP inconnue, refus
+    par protection mémoire. <strong>Troisième porte</strong> : comptage et test du seuil.
+    Cet ordre n'est pas indifférent : les cas les plus fréquents en situation d'attaque
+    (IP déjà bannies) sont traités les premiers, économisant le travail en aval.
+  </p>
+
+  <h3>Une nuance d'optimisation</h3>
+  <p>
+    La ligne <code>IpState&amp; s = (it != ipTable.end()) ? it-&gt;second : ipTable[ip]</code>
+    est élégante : si l'IP existait déjà, on réutilise l'itérateur déjà calculé ; sinon,
+    <code>ipTable[ip]</code> insère une nouvelle entrée (constructeur par défaut). Cela évite
+    une seconde recherche dans l'arbre rouge-noir, opération coûteuse en log(n).
+  </p>
+
+  <h3>L'effet du double appel à <em>markAttackActivity</em></h3>
+  <p>
+    Cette fonction est invoquée à <strong>trois endroits distincts</strong> :
+    refus pour bannissement, refus pour table pleine, et nouveau bannissement. Or, grâce au
+    mécanisme <em>compare-exchange</em> du bloc 08, ces multiples appels n'enregistrent qu'un
+    <em>seul</em> instant de début d'attaque — le premier. La cohérence du système émerge de
+    la combinaison de fonctions simples, chacune respectant sa propre invariance.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 11 ════════════════════ -->
+<section class="block" id="b11">
+  <div class="block-number">11</div>
+  <div class="block-lines">Lignes 274 — 291</div>
+  <h2 class="block-title">Le filtre <em>gateShouldBlock</em></h2>
+
+<pre data-lines="274–291"><span class="kw">bool</span> <span class="fn">gateShouldBlock</span>(<span class="kw">const</span> <span class="typ">String</span>&amp; ip) {
+    <span class="kw">const unsigned long</span> now = <span class="fn">millis</span>();
+    <span class="fn">xSemaphoreTake</span>(tableMutex, portMAX_DELAY);
+
+    <span class="kw">auto</span> it = ipTable.<span class="fn">find</span>(ip);
+    <span class="kw">if</span> (it == ipTable.<span class="fn">end</span>()) {
+        <span class="fn">xSemaphoreGive</span>(tableMutex);
+        <span class="kw">return false</span>;
+    }
+    <span class="kw">if</span> (it-&gt;second.bannedUntil &amp;&amp; it-&gt;second.bannedUntil &gt; now) {
+        <span class="fn">xSemaphoreGive</span>(tableMutex);
+        <span class="fn">markAttackActivity</span>(now);
+        <span class="kw">return true</span>;
+    }
+    <span class="fn">xSemaphoreGive</span>(tableMutex);
+    <span class="kw">return false</span>;
+}</pre>
+
+  <p>
+    Cette fonction est la <strong>contrepartie en lecture seule</strong> de <code>checkAndRate</code>.
+    Elle ne modifie pas l'état, n'incrémente aucun compteur — elle se contente de répondre
+    à une seule question : <em>cette IP est-elle bannie en ce moment ?</em>
+  </p>
+
+  <p>
+    Elle est invoquée par deux clients très différents : le filtre TCP du bloc 05 (qui doit décider
+    s'il ferme la connexion sans même la traiter) et le middleware HTTP du bloc 14 (qui doit décider
+    s'il intercepte la requête). Cette séparation entre lecture et écriture est une bonne hygiène
+    de conception : <code>gateShouldBlock</code> est très rapide car elle évite toute la mécanique
+    de comptage, ce qui réduit le temps passé sous mutex.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 12 ════════════════════ -->
+<section class="block" id="b12">
+  <div class="block-number">12</div>
+  <div class="block-lines">Lignes 293 — 308</div>
+  <h2 class="block-title">Nettoyage <em>cleanupIpTable</em></h2>
+
+<pre data-lines="293–308"><span class="kw">void</span> <span class="fn">cleanupIpTable</span>() {
+    <span class="kw">const unsigned long</span> now = <span class="fn">millis</span>();
+    <span class="fn">xSemaphoreTake</span>(tableMutex, portMAX_DELAY);
+    <span class="kw">for</span> (<span class="kw">auto</span> it = ipTable.<span class="fn">begin</span>(); it != ipTable.<span class="fn">end</span>(); ) {
+        <span class="kw">bool</span> banned = (it-&gt;second.bannedUntil &gt; now);
+        <span class="kw">bool</span> idle   = (now - it-&gt;second.windowStart &gt; <span class="num">30000</span>);
+        it = (!banned &amp;&amp; idle) ? ipTable.<span class="fn">erase</span>(it) : std::<span class="fn">next</span>(it);
+    }
+    <span class="kw">size_t</span> sz = ipTable.<span class="fn">size</span>();
+    <span class="fn">xSemaphoreGive</span>(tableMutex);
+    Serial.<span class="fn">printf</span>(<span class="str">"[DDoS] Table: %u entrées | pic: %u PPS | heap: %u\n"</span>, ...);
+}</pre>
+
+  <p>
+    Sans entretien, la table grandirait à chaque nouvelle IP rencontrée jusqu'à atteindre la limite
+    de 200. Cette fonction, appelée toutes les 30 secondes par <code>netTask</code>, supprime les
+    entrées qui sont <strong>à la fois</strong> non bannies <strong>et</strong> inactives depuis
+    plus de 30 secondes.
+  </p>
+
+  <p>
+    Le critère composé est significatif : un client légitime qui visite la page puis se déconnecte
+    libère son entrée après 30 secondes ; un bannissement, en revanche, reste éternel — c'est le
+    comportement attendu d'une <em>liste de réputation</em>. L'idiome <code>it = (...) ? erase(it) :
+    std::next(it)</code> est l'écriture canonique de la suppression sûre pendant l'itération sur
+    une collection STL.
+  </p>
+
+  <p>
+    Le log final agrège <strong>trois métriques opérationnelles</strong> en une seule ligne :
+    taille de la table, pic global de PPS depuis le dernier nettoyage, et mémoire libre. C'est
+    l'équivalent d'un tableau de bord miniature, utile pour le diagnostic à long terme.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 13 ════════════════════ -->
+<section class="block" id="b13">
+  <div class="block-number">13</div>
+  <div class="block-lines">Lignes 310 — 339</div>
+  <h2 class="block-title">Reconnexion <em>ensureWifi</em></h2>
+
+<pre data-lines="310–339"><span class="kw">bool</span> <span class="fn">ensureWifi</span>() {
+    <span class="kw">static unsigned long</span> lastTryMs = <span class="num">0</span>;
+    <span class="kw">const unsigned long</span> now = <span class="fn">millis</span>();
+
+    <span class="kw">if</span> (WiFi.<span class="fn">status</span>() == WL_CONNECTED) {
+        lastWifiOkMs.<span class="fn">store</span>(now, std::memory_order_relaxed);
+        <span class="kw">return true</span>;
+    }
+
+    <span class="com">// Redémarrage d'urgence si WiFi perdu trop longtemps</span>
+    <span class="kw">unsigned long</span> lastOk = lastWifiOkMs.<span class="fn">load</span>(std::memory_order_relaxed);
+    <span class="kw">if</span> (lastOk &gt; <span class="num">0</span> &amp;&amp; now - lastOk &gt; WIFI_DEAD_REBOOT_MS) {
+        Serial.<span class="fn">printf</span>(<span class="str">"[!!!] WiFi perdu depuis %lu ms — sauvegarde et redémarrage\n"</span>, now - lastOk);
+        Serial.<span class="fn">flush</span>();
+        <span class="fn">saveLuxHistory</span>();
+        <span class="fn">delay</span>(<span class="num">100</span>);
+        ESP.<span class="fn">restart</span>();
+    }
+
+    <span class="kw">if</span> (now - lastTryMs &lt; WIFI_RETRY_MS) <span class="kw">return false</span>;
+    lastTryMs = now;
+
+    Serial.<span class="fn">println</span>(<span class="str">"[WiFi] Déconnecté, reconnexion…"</span>);
+    WiFi.<span class="fn">disconnect</span>();
+    WiFi.<span class="fn">begin</span>(SSID, PASSWORD);
+    <span class="kw">return false</span>;
+}</pre>
+
+  <p>
+    Cette fonction traite un cas <strong>spécifique mais redoutable</strong> de l'ESP32 : sous
+    une inondation suffisamment violente, le pilote WiFi peut entrer dans un état corrompu d'où
+    aucune séquence de reconnexion logicielle ne le sort. Le commentaire du code l'admet
+    sans détour : <em>« un redémarrage propre est le seul remède fiable »</em>.
+  </p>
+
+  <p>
+    La logique procède en trois étages.
+    <strong>Premier étage</strong> : si la connexion est établie, mettre à jour
+    <code>lastWifiOkMs</code> — c'est le tic-tac vital du watchdog WiFi.
+    <strong>Deuxième étage</strong> : si la déconnexion persiste depuis plus de
+    <code>WIFI_DEAD_REBOOT_MS = 120 000</code> millisecondes (2 minutes), déclencher la procédure
+    d'urgence : flush, save, restart.
+    <strong>Troisième étage</strong> : sinon, espacer les tentatives de reconnexion de 5 secondes
+    pour ne pas matraquer la pile WiFi avec des appels inutiles.
+  </p>
+
+  <div class="callout warn">
+    <span class="label">Subtilité</span>
+    Le test <code>lastOk &gt; 0</code> évite un redémarrage immédiat au tout premier appel, où
+    <code>lastWifiOkMs</code> vaut encore 0. Sans ce garde-fou, le système redémarrerait en boucle
+    si la connexion initiale échouait.
+  </div>
+</section>
+
+<!-- ════════════════════ BLOC 14 ════════════════════ -->
+<section class="block" id="b14">
+  <div class="block-number">14</div>
+  <div class="block-lines">Lignes 341 — 358</div>
+  <h2 class="block-title">Le middleware <em>RateLimitMiddleware</em></h2>
+
+<pre data-lines="341–358"><span class="kw">class</span> <span class="typ">RateLimitMiddleware</span> : <span class="kw">public</span> <span class="typ">AsyncWebHandler</span> {
+<span class="kw">public</span>:
+    <span class="kw">bool</span> <span class="fn">canHandle</span>(<span class="typ">AsyncWebServerRequest</span>* req) <span class="kw">const override</span> {
+        <span class="typ">AsyncClient</span>* c = req-&gt;<span class="fn">client</span>();
+        <span class="kw">if</span> (!c) <span class="kw">return false</span>;
+        <span class="kw">const</span> <span class="typ">String</span> ip = c-&gt;<span class="fn">remoteIP</span>().<span class="fn">toString</span>();
+        <span class="kw">if</span> (<span class="fn">gateShouldBlock</span>(ip)) <span class="kw">return true</span>;
+        <span class="kw">return</span> !<span class="fn">checkAndRate</span>(ip);
+    }
+
+    <span class="kw">void</span> <span class="fn">handleRequest</span>(<span class="typ">AsyncWebServerRequest</span>* req) <span class="kw">override</span> {
+        <span class="typ">AsyncWebServerResponse</span>* resp = req-&gt;<span class="fn">beginResponse</span>(<span class="num">429</span>, <span class="str">"text/plain"</span>, <span class="str">"Too Many Requests"</span>);
+        resp-&gt;<span class="fn">addHeader</span>(<span class="str">"Connection"</span>, <span class="str">"close"</span>);
+        req-&gt;<span class="fn">send</span>(resp);
+    }
+};</pre>
+
+  <p>
+    Ce middleware exploite une particularité d'<code>ESPAsyncWebServer</code> : la méthode
+    <code>canHandle</code> est invoquée pour chaque requête, dans l'ordre d'enregistrement des
+    gestionnaires. Si elle retourne <code>true</code>, le gestionnaire prend la main avant les
+    handlers de route ; sinon, l'examen continue.
+  </p>
+
+  <p>
+    L'inversion sémantique est ingénieuse : <code>canHandle</code> retourne <code>true</code>
+    précisément quand la requête est <strong>malveillante</strong>, prenant ainsi le contrôle pour
+    répondre <code>429 Too Many Requests</code> et fermer la connexion. Les requêtes légitimes,
+    pour lesquelles <code>checkAndRate</code> retourne <code>true</code>, ne déclenchent pas
+    <code>canHandle</code> et poursuivent leur chemin vers les routes normales.
+  </p>
+
+  <p>
+    L'en-tête <code>Connection: close</code> est essentiel : il force l'attaquant à rétablir un
+    handshake TCP complet pour chaque tentative. Cela démultiplie son coût et accélère la
+    saturation de la fenêtre de détection.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 15 ════════════════════ -->
+<section class="block" id="b15">
+  <div class="block-number">15</div>
+  <div class="block-lines">Lignes 360 — 399</div>
+  <h2 class="block-title">Sérialisation JSON pour SSE</h2>
+
+<pre data-lines="360–399"><span class="kw">static</span> <span class="typ">String</span> <span class="fn">buildHistoryJson</span>() {
+    <span class="fn">xSemaphoreTake</span>(historyMutex, portMAX_DELAY);
+    <span class="typ">String</span> json = <span class="str">"["</span>;
+    <span class="kw">for</span> (<span class="kw">size_t</span> i = <span class="num">0</span>; i &lt; luxHistory.<span class="fn">size</span>(); ++i) {
+        <span class="kw">if</span> (i) json += <span class="str">','</span>;
+        json += <span class="str">"{\"v\":"</span>; json += <span class="typ">String</span>(luxHistory[i].value, <span class="num">1</span>);
+        json += <span class="str">",\"t\":"</span>; json += luxHistory[i].secs;
+        json += <span class="str">",\"p\":"</span>; json += luxHistory[i].prevBoot ? <span class="str">'1'</span> : <span class="str">'0'</span>;
+        json += <span class="str">'}'</span>;
+    }
+    json += <span class="str">']'</span>;
+    <span class="fn">xSemaphoreGive</span>(historyMutex);
+    <span class="kw">return</span> json;
+}
+
+<span class="kw">static</span> <span class="typ">String</span> <span class="fn">buildBannedJson</span>() { <span class="com">/* idem, parcours de ipTable */</span> }</pre>
+
+  <p>
+    Deux fonctions construisent les payloads JSON pour la diffusion SSE. Le code écrit le JSON
+    à la main, par concaténation, sans recourir à <code>ArduinoJson</code> ou autre bibliothèque.
+    Le choix se justifie par la <strong>simplicité du schéma</strong> : trois clés par objet
+    (<code>v</code>, <code>t</code>, <code>p</code>), aucune valeur n'a besoin d'être échappée car
+    on ne sérialise que des nombres. L'absence de dépendance évite plusieurs kilo-octets de code
+    et quelques centaines d'octets de RAM.
+  </p>
+
+  <p>
+    Les <strong>noms de clés réduits</strong> (<code>v</code>, <code>t</code>, <code>p</code> plutôt
+    que <code>value</code>, <code>timestamp</code>, <code>previousBoot</code>) divisent par trois
+    la taille du payload — économie notable lorsque 100 entrées doivent être transmises à chaque
+    rafraîchissement.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 16 ════════════════════ -->
+<section class="block" id="b16">
+  <div class="block-number">16</div>
+  <div class="block-lines">Lignes 401 — 530</div>
+  <h2 class="block-title">Page web embarquée (<em>INDEX_HTML</em>)</h2>
+
+<pre data-lines="401–530"><span class="kw">const char</span> INDEX_HTML[] PROGMEM = R<span class="str">"rawhtml(
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt; ... &lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;BH1750 Light Sensor&lt;/h1&gt;
+  &lt;div&gt;&lt;span id="lux"&gt;—&lt;/span&gt;&lt;span id="unit"&gt; lx&lt;/span&gt;&lt;/div&gt;
+  ...
+  &lt;script&gt;
+    const src = new EventSource('/events');
+    src.addEventListener('lux',     e =&gt; { ... });
+    src.addEventListener('history', e =&gt; { ... });
+    src.addEventListener('banned',  e =&gt; { ... });
+    src.onerror = () =&gt; { ... };
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+)rawhtml"</span>;</pre>
+
+  <p>
+    La page HTML est <strong>entièrement embarquée</strong> dans le firmware via un littéral brut
+    C++11 (<code>R"rawhtml(...)rawhtml"</code>) et stockée en mémoire flash grâce à l'attribut
+    <code>PROGMEM</code>. Cela évite toute consommation de RAM pour héberger le contenu statique
+    de la page, qui n'est lu qu'à la demande.
+  </p>
+
+  <h3>Trois flux distincts sur un seul canal SSE</h3>
+  <p>
+    Côté JavaScript, un seul objet <code>EventSource</code> est ouvert sur <code>/events</code>,
+    et trois écouteurs d'événements distinguent les types par leur <em>nom d'événement</em>
+    (champ <code>event:</code> de la trame SSE) : <code>lux</code>, <code>history</code>,
+    <code>banned</code>. Cette multiplexation native du protocole SSE est ce qui le rend si élégant
+    pour ce cas d'usage — une connexion, plusieurs canaux logiques.
+  </p>
+
+  <h3>Mécanismes d'auto-résilience côté client</h3>
+  <p>
+    La page se recharge automatiquement toutes les 30 secondes (<code>setTimeout</code> sur
+    <code>location.reload</code>). En cas d'erreur SSE, un compteur de secours déclenche un
+    rechargement après 60 secondes. Cette double sécurité reflète, côté navigateur, la même
+    philosophie <em>crash-only</em> qui guide le firmware : la récupération passe par la
+    réinitialisation plutôt que par la tentative de réparation locale.
+  </p>
+
+  <h3>Esthétique de l'interface</h3>
+  <p>
+    L'interface adopte une <strong>esthétique sobre et fonctionnelle</strong> : fond sombre, lux
+    affiché en grand caractère ambre (#ffd54f), historique en liste épurée, IP bannies en rouge
+    discret. Les entrées de boot précédent apparaissent en italique avec opacité réduite, séparées
+    par un libellé <em>« — previous boot — »</em>. Aucune dépendance externe — le HTML, CSS et
+    JavaScript tiennent dans un seul fichier, ce qui simplifie la livraison embarquée.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 17 ════════════════════ -->
+<section class="block" id="b17">
+  <div class="block-number">17</div>
+  <div class="block-lines">Lignes 532 — 598</div>
+  <h2 class="block-title">La tâche réseau (<em>netTask</em>)</h2>
+
+<pre data-lines="532–598"><span class="kw">void</span> <span class="fn">netTask</span>(<span class="kw">void</span>* arg) {
+    (<span class="kw">void</span>)arg;
+    <span class="kw">unsigned long</span> lastHeapMs     = <span class="fn">millis</span>();
+    <span class="kw">unsigned long</span> lastWatchdogMs = <span class="fn">millis</span>();
+    <span class="kw">unsigned long</span> lastHistoryMs  = <span class="fn">millis</span>();
+    <span class="kw">unsigned long</span> lastBannedMs   = <span class="fn">millis</span>();
+
+    <span class="kw">for</span> (;;) {
+        <span class="kw">unsigned long</span> now = <span class="fn">millis</span>();
+
+        <span class="kw">if</span> (!<span class="fn">ensureWifi</span>()) { <span class="fn">vTaskDelay</span>(<span class="fn">pdMS_TO_TICKS</span>(<span class="num">50</span>)); <span class="kw">continue</span>; }
+
+        <span class="kw">if</span> (now - lastCleanupMs &gt;= CLEANUP_INTERVAL_MS) {
+            lastCleanupMs = now; <span class="fn">cleanupIpTable</span>();
+        }
+        <span class="kw">if</span> (now - lastWatchdogMs &gt;= WATCHDOG_CHECK_MS) {
+            lastWatchdogMs = now; <span class="fn">runAttackWatchdog</span>(now);
+        }
+        <span class="kw">if</span> (now - lastHeapMs &gt;= HEAP_LOG_INTERVAL_MS) {
+            lastHeapMs = now;
+            Serial.<span class="fn">printf</span>(<span class="str">"[mem] heap libre=%u min=%u\n"</span>, ...);
+        }
+
+        <span class="com">// Diffusion temps réel de la nouvelle valeur</span>
+        <span class="kw">if</span> (luxUpdated.<span class="fn">exchange</span>(<span class="kw">false</span>, std::memory_order_acquire)) {
+            <span class="kw">float</span> lux = currentLux.<span class="fn">load</span>(std::memory_order_relaxed);
+            events.<span class="fn">send</span>(<span class="typ">String</span>(lux, <span class="num">2</span>).<span class="fn">c_str</span>(), <span class="str">"lux"</span>, <span class="fn">millis</span>());
+        }
+
+        <span class="com">// Échantillonnage historique toutes les 15 s + sauvegarde NVS</span>
+        <span class="kw">if</span> (now - lastHistoryMs &gt;= LUX_HISTORY_INTERVAL_MS) { ... }
+
+        <span class="com">// Liste des IP bannies toutes les 5 s</span>
+        <span class="kw">if</span> (now - lastBannedMs &gt;= BANNED_SEND_MS) { ... }
+
+        <span class="fn">vTaskDelay</span>(<span class="fn">pdMS_TO_TICKS</span>(NET_TASK_DELAY_MS));
+    }
+}</pre>
+
+  <p>
+    <code>netTask</code> orchestre <strong>tout ce qui n'est pas l'acquisition de la mesure</strong> :
+    surveillance WiFi, watchdog d'attaque, nettoyage périodique, journalisation mémoire, diffusion
+    SSE temps réel, sauvegarde de l'historique. L'architecture est celle d'une <strong>boucle
+    coopérative à minuteurs</strong> : une seule boucle <code>for(;;)</code> compare l'horloge
+    courante à des timestamps mémorisés pour décider quelle action déclencher.
+  </p>
+
+  <h3>Synchronisation producteur-consommateur</h3>
+  <p>
+    La séquence
+    <code>if (luxUpdated.exchange(false, std::memory_order_acquire))</code>
+    illustre une mécanique de synchronisation <em>release-acquire</em> classique. La boucle
+    principale (cœur 1) <em>publie</em> une nouvelle valeur avec <code>memory_order_release</code> ;
+    <code>netTask</code> (cœur 0) la <em>récupère</em> en effaçant le drapeau de manière atomique
+    avec <code>memory_order_acquire</code>. Cette construction garantit que <strong>la lecture de
+    <code>currentLux</code> sera bien synchronisée</strong> avec l'écriture du cœur producteur,
+    sans qu'aucun mutex ne soit jamais pris.
+  </p>
+
+  <h3>Le délai de boucle</h3>
+  <p>
+    <code>vTaskDelay(pdMS_TO_TICKS(NET_TASK_DELAY_MS))</code> avec <code>NET_TASK_DELAY_MS = 2</code>
+    yield le processeur toutes les 2 ms, ce qui laisse aux tâches de plus basse priorité (notamment
+    AsyncTCP à priorité 3) l'occasion de s'exécuter. Sans ce délai, <code>netTask</code> à priorité
+    5 monopoliserait le cœur 0 et asphyxierait la pile TCP.
+  </p>
+</section>
+
+<!-- ════════════════════ BLOC 18 ════════════════════ -->
+<section class="block" id="b18">
+  <div class="block-number">18</div>
+  <div class="block-lines">Lignes 600 — 667</div>
+  <h2 class="block-title">Initialisation (<em>setup</em>)</h2>
+
+<pre data-lines="600–667"><span class="kw">void</span> <span class="fn">setup</span>() {
+    Serial.<span class="fn">begin</span>(<span class="num">115200</span>);
+    Serial2.<span class="fn">begin</span>(UART_BAUD, SERIAL_8N1, UART_RX_PIN, -<span class="num">1</span>);
+
+    Serial.<span class="fn">printf</span>(<span class="str">"\n[Boot] Raison du redémarrage : %d\n"</span>, (<span class="kw">int</span>)<span class="fn">esp_reset_reason</span>());
+
+    tableMutex   = <span class="fn">xSemaphoreCreateMutex</span>();
+    historyMutex = <span class="fn">xSemaphoreCreateMutex</span>();
+    <span class="kw">if</span> (!tableMutex || !historyMutex) { <span class="com">/* échec fatal */</span> }
+
+    <span class="fn">loadLuxHistory</span>();
+
+    WiFi.<span class="fn">setAutoReconnect</span>(<span class="kw">true</span>);
+    WiFi.<span class="fn">persistent</span>(<span class="kw">true</span>);
+    WiFi.<span class="fn">mode</span>(WIFI_STA);
+    WiFi.<span class="fn">setSleep</span>(<span class="kw">false</span>);
+    WiFi.<span class="fn">begin</span>(SSID, PASSWORD);
+    <span class="kw">while</span> (WiFi.<span class="fn">status</span>() != WL_CONNECTED) { Serial.<span class="fn">print</span>(<span class="str">'.'</span>); <span class="fn">delay</span>(<span class="num">500</span>); }
+
+    <span class="fn">configTime</span>(<span class="num">0</span>, <span class="num">0</span>, <span class="str">"pool.ntp.org"</span>, <span class="str">"time.nist.gov"</span>);
+    <span class="kw">while</span> (!<span class="fn">getLocalTime</span>(&amp;tmInfo, <span class="num">0</span>)) { ... }
+
+    server.<span class="fn">setGate</span>(gateShouldBlock);
+    server.<span class="fn">addHandler</span>(<span class="kw">new</span> <span class="fn">RateLimitMiddleware</span>());
+    server.<span class="fn">on</span>(<span class="str">"/"</span>, HTTP_GET, [](<span class="typ">AsyncWebServerRequest</span>* req) {
+        req-&gt;<span class="fn">send</span>(<span class="num">200</span>, <span class="str">"text/html"</span>, INDEX_HTML);
+    });
+    server.<span class="fn">onNotFound</span>(...);
+    events.<span class="fn">onConnect</span>(...);
+    server.<span class="fn">addHandler</span>(&amp;events);
+    server.<span class="fn">begin</span>();
+
+    <span class="fn">xTaskCreatePinnedToCore</span>(netTask, <span class="str">"netTask"</span>, NET_TASK_STACK,
+                            <span class="kw">nullptr</span>, NET_TASK_PRIO, &amp;netTaskHandle, NET_TASK_CORE);
+}</pre>
+
+  <p>
+    La fonction <code>setup</code> orchestre l'amorçage du système selon une séquence rigoureuse
+    qu'on peut décomposer en <strong>huit étapes</strong> ordonnées par dépendance.
+  </p>
+
+  <p>
+    <strong>(1)</strong> Initialisation des deux ports série : la console à 115 200 bauds, et
+    <code>Serial2</code> en réception seule sur la broche 16.
+    <strong>(2)</strong> Journalisation immédiate du motif de redémarrage via
+    <code>esp_reset_reason()</code> — précieux pour distinguer un crash d'un redémarrage volontaire
+    par le watchdog d'attaque.
+    <strong>(3)</strong> Création des mutex, avec gestion d'échec fatale (<code>while(true) delay()</code>) :
+    sans mutex, aucune cohérence multi-tâche n'est possible, mieux vaut figer le système plutôt
+    que de poursuivre sur un état brisé.
+    <strong>(4)</strong> Restauration de l'historique depuis NVS, ce qui doit se produire <em>avant</em>
+    toute activité de la tâche réseau qui pourrait sérialiser cet historique vers les clients SSE.
+  </p>
+
+  <p>
+    <strong>(5)</strong> Connexion WiFi : <code>setSleep(false)</code> désactive le mode d'économie
+    d'énergie, indispensable pour la réactivité réseau ; <code>setAutoReconnect(true)</code> active
+    la reconnexion automatique du driver — ceinture en plus de <code>ensureWifi</code>.
+    <strong>(6)</strong> Synchronisation NTP avec deux serveurs en redondance.
+    <strong>(7)</strong> Configuration du serveur : injection de la garde, ajout du middleware
+    en premier (pour qu'il s'exécute avant les routes), enregistrement de la route racine, de
+    la route 404 et de la source d'événements. <strong>L'ordre d'enregistrement est crucial</strong> :
+    AsyncWebServer évalue les handlers dans cet ordre, donc le middleware doit précéder les routes
+    légitimes.
+    <strong>(8)</strong> Lancement de <code>netTask</code> sur le cœur 0 avec priorité 5.
+  </p>
+
+  <div class="callout">
+    <span class="label">Détail révélateur</span>
+    Le callback <code>events.onConnect</code> envoie immédiatement l'historique et la liste des
+    bannissements à chaque nouvelle connexion SSE. Un nouveau visiteur n'attend pas le prochain
+    cycle de 15 secondes pour voir ses données — l'expérience initiale est <em>instantanée</em>.
+  </div>
+</section>
+
+<!-- ════════════════════ BLOC 19 ════════════════════ -->
+<section class="block" id="b19">
+  <div class="block-number">19</div>
+  <div class="block-lines">Lignes 669 — 685</div>
+  <h2 class="block-title">Boucle principale (<em>loop</em>)</h2>
+
+<pre data-lines="669–685"><span class="kw">void</span> <span class="fn">loop</span>() {
+    <span class="kw">while</span> (Serial2.<span class="fn">available</span>()) {
+        <span class="typ">String</span> line = Serial2.<span class="fn">readStringUntil</span>(<span class="str">'\n'</span>);
+        line.<span class="fn">trim</span>();
+        <span class="kw">if</span> (line.<span class="fn">startsWith</span>(<span class="str">"LUX:"</span>)) {
+            <span class="kw">float</span> lux = line.<span class="fn">substring</span>(<span class="num">4</span>).<span class="fn">toFloat</span>();
+            currentLux.<span class="fn">store</span>(lux, std::memory_order_relaxed);
+            luxUpdated.<span class="fn">store</span>(<span class="kw">true</span>, std::memory_order_release);
+            Serial.<span class="fn">printf</span>(<span class="str">"[UART] lux=%.2f\n"</span>, lux);
+        }
+    }
+    <span class="fn">delay</span>(APP_LOOP_DELAY_MS);
+}</pre>
+
+  <p>
+    Trompeuse de simplicité, cette fonction concentre <strong>la philosophie du firmware</strong>
+    sur une vingtaine de lignes. Exécutée sur le cœur 1 (APP_CPU), elle n'a qu'une responsabilité :
+    extraire les trames <code>LUX:&lt;valeur&gt;</code> du port série et les publier dans les
+    variables atomiques partagées.
+  </p>
+
+  <h3>Le protocole de trame</h3>
+  <p>
+    Le préfixe <code>"LUX:"</code> agit comme un mot-clé d'identification : <strong>toute ligne
+    ne le portant pas est silencieusement ignorée</strong>. Cette tolérance permet d'envoyer
+    sur le même UART des messages de debug du capteur (par exemple « Sensor OK ») sans risquer
+    de les voir interprétés comme des valeurs erronées. Le parsing par <code>line.substring(4).toFloat()</code>
+    convertit toute chaîne malformée en <code>0.0f</code>, ce qui constitue un fallback acceptable
+    mais qu'on pourrait améliorer en exigeant un format strict (par exemple via <code>strtof</code>
+    avec vérification du pointeur de fin).
+  </p>
+
+  <h3>La sémantique mémoire des deux <code>store</code></h3>
+  <p>
+    L'ordre des deux écritures est <strong>fondamental</strong>. <code>currentLux.store(lux, relaxed)</code>
+    publie la valeur sans aucune garantie d'ordre, puis <code>luxUpdated.store(true, release)</code>
+    publie le drapeau avec une barrière de type <em>release</em>. La spécification C++ garantit
+    alors qu'un lecteur acquérant le drapeau (le <code>exchange</code> du bloc 17) verra
+    nécessairement la nouvelle valeur de <code>currentLux</code>. C'est l'<strong>idiome
+    canonique du producteur-consommateur sans verrou</strong>, dont la correction repose
+    entièrement sur cette discipline des ordres mémoire.
+  </p>
+
+  <p>
+    Le <code>delay(APP_LOOP_DELAY_MS)</code> en queue de fonction (5 millisecondes) yield le
+    processeur, laissant aux tâches de plus basse priorité du cœur 1 (et au cœur 0) l'occasion
+    d'exécuter leur travail. Sans ce délai, la boucle Arduino consommerait 100% du cœur 1 même
+    en l'absence de données.
+  </p>
+</section>
+
+<hr class="orn">
+
+<section class="block">
+  <h2 class="block-title">Synthèse</h2>
+  <p>
+    En 686 lignes, le firmware compose une <strong>partition à plusieurs voix</strong> : un cœur
+    d'acquisition simple comme une berceuse, une tâche réseau qui tisse ses sous-mélodies temporelles,
+    et un orchestre de défense — TCP, HTTP, comptage, watchdog — qui veille à ce que rien ne
+    vienne troubler la mesure. Chaque bloc analysé répond à une question d'ingénierie précise,
+    et leur articulation forme un système dont la cohérence est plus grande que la somme de ses parties.
+  </p>
+  <p>
+    Si l'on ne devait retenir qu'une leçon, ce serait celle-ci : <strong>la robustesse ne naît pas
+    d'un mécanisme unique mais de leur empilement discipliné</strong>. Filtre TCP, middleware HTTP,
+    moteur de comptage, watchdog d'attaque, watchdog WiFi, persistance NVS, redémarrage gracieux —
+    chaque couche prend en charge un type de défaillance et délègue les autres à ses voisines.
+    C'est précisément ce que désigne la formule <em>defense in depth</em>, et c'est ce qui distingue
+    un firmware d'apprentissage d'un firmware <em>prêt pour le terrain</em>.
+  </p>
+</section>
+
+<footer>
+  Analyse rédigée en commentaire d'apprentissage du firmware <code>main_final_real_cleaned.cpp</code>.<br>
+  <span class="colophon">Composition typographique : Fraunces &amp; JetBrains Mono.</span>
+</footer>
+
+</div>
+
+<script>
+  // Progress bar
+  const bar = document.getElementById('progress');
+  window.addEventListener('scroll', () => {
+    const h = document.documentElement;
+    const pct = (h.scrollTop / (h.scrollHeight - h.clientHeight)) * 100;
+    bar.style.width = pct + '%';
+  });
+</script>
+
+</body>
+</html>
