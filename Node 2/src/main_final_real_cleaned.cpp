@@ -31,6 +31,7 @@ const char* PASSWORD = "ishak2012";
 #define DDOS_GLOBAL_PPS_MAX  200    // Seuil global d'alerte trafic élevé
 #define DDOS_TABLE_LIMIT     200    // Nombre maximum d'IP dans la table
 #define CLEANUP_INTERVAL_MS  30000  // Intervalle de nettoyage de la table IP
+#define TCP_CONN_THRESHOLD   20     // Connexions TCP/s par IP avant bannissement
 #define BAN_LOG_THROTTLE_MS  1000   // Anti-spam des messages de bannissement
 #define HEAP_LOG_INTERVAL_MS 10000  // Intervalle d'affichage de la mémoire libre
 
@@ -50,6 +51,8 @@ static constexpr uint32_t    LUX_HISTORY_INTERVAL_MS  = 15000; // Intervalle d'e
 static constexpr uint32_t    BANNED_SEND_MS           = 5000;  // Intervalle d'envoi de la liste des IP bannies
 static constexpr uint16_t    LUX_HISTORY_MAX          = 100;   // Nombre maximum d'entrées dans l'historique
 
+bool checkTcpRate(const String& ip);  // forward declaration
+
 // ── Serveur web avec filtre TCP au niveau connexion ───────────────
 // Bloque les IP bannies avant même de créer la requête HTTP,
 // en s'accrochant au callback de nouvelle connexion d'AsyncTCP.
@@ -66,11 +69,18 @@ public:
             auto* self = static_cast<TcpGateWebServer*>(s);
             if (!c) return;
 
+            const String ip = c->remoteIP().toString();
+
             // Fermer immédiatement les connexions bannies au niveau TCP
-            if (self->_gate && self->_gate(c->remoteIP().toString())) {
-                c->onDisconnect([](void*, AsyncClient* client) {
-                    delete client;
-                }, nullptr);
+            if (self->_gate && self->_gate(ip)) {
+                c->onDisconnect([](void*, AsyncClient* client) { delete client; }, nullptr);
+                c->close(true);
+                return;
+            }
+
+            // Fermer si le débit de connexions TCP est excessif
+            if (!checkTcpRate(ip)) {
+                c->onDisconnect([](void*, AsyncClient* client) { delete client; }, nullptr);
                 c->close(true);
                 return;
             }
@@ -78,9 +88,7 @@ public:
             c->setRxTimeout(3);
             AsyncWebServerRequest* r = new AsyncWebServerRequest(self, c);
             if (r == nullptr) {
-                c->onDisconnect([](void*, AsyncClient* client) {
-                    delete client;
-                }, nullptr);
+                c->onDisconnect([](void*, AsyncClient* client) { delete client; }, nullptr);
                 c->close(true);
             }
         }, this);
@@ -104,6 +112,8 @@ struct IpState {
     uint32_t      pps;
     unsigned long windowStart;
     unsigned long bannedUntil;
+    uint32_t      tcpConns;
+    unsigned long tcpWinStart;
 };
 
 std::map<String, IpState> ipTable;              // Table des états par IP
@@ -288,6 +298,47 @@ bool gateShouldBlock(const String& ip) {
     }
     xSemaphoreGive(tableMutex);
     return false;
+}
+
+// Vérifie et rate-limite les connexions TCP brutes par IP.
+// Retourne false si l'IP est bannie ou dépasse TCP_CONN_THRESHOLD connexions/s.
+bool checkTcpRate(const String& ip) {
+    const unsigned long now = millis();
+    xSemaphoreTake(tableMutex, portMAX_DELAY);
+
+    auto it = ipTable.find(ip);
+    if (it != ipTable.end()) {
+        if (it->second.bannedUntil && it->second.bannedUntil > now) {
+            xSemaphoreGive(tableMutex);
+            markAttackActivity(now);
+            return false;
+        }
+    } else if (ipTable.size() >= DDOS_TABLE_LIMIT) {
+        xSemaphoreGive(tableMutex);
+        markAttackActivity(now);
+        return false;
+    }
+
+    IpState& s = (it != ipTable.end()) ? it->second : ipTable[ip];
+    if (now - s.tcpWinStart >= DDOS_WINDOW_MS) {
+        s.tcpWinStart = now;
+        s.tcpConns    = 0;
+    }
+    ++s.tcpConns;
+
+    bool banned = (s.tcpConns > TCP_CONN_THRESHOLD);
+    if (banned) applyBan(s);
+
+    uint32_t connCount = s.tcpConns;
+    xSemaphoreGive(tableMutex);
+
+    if (banned) {
+        markAttackActivity(now);
+        if (shouldLog(now))
+            Serial.printf("[TCP] BANNI %s (%u connexions/s)\n", ip.c_str(), connCount);
+        return false;
+    }
+    return true;
 }
 
 // Supprime les entrées inactives et non-bannies de la table IP
